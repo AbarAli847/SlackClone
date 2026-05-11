@@ -7,58 +7,63 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
-  LogOut,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { io } from "socket.io-client";
 import Modal from "../components/Model";
 import AddMemberModal from "../components/AddMemberModal";
 
-const BACKEND_URL = "http://localhost:5000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 let socket;
 
 const ChatSection = () => {
   const router = useRouter();
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  // Auth
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
 
-  // UI State
   const [isChannelsOpen, setIsChannelsOpen] = useState(true);
   const [isDmsOpen, setIsDmsOpen] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Data
   const [channels, setChannels] = useState([]);
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
 
-  // Active room
-  const [activeRoom, setActiveRoom] = useState(null);  
+  const [activeRoom, setActiveRoom] = useState(null);
+  const activeRoomRef = useRef(null);
 
-  // Message input
   const [messageText, setMessageText] = useState("");
   const [typingUsers, setTypingUsers] = useState([]);
   const typingTimeoutRef = useRef(null);
-  //private chennel
+
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState(null);
+
+  const [unreadDMs, setUnreadDMs] = useState({});
+
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filePreview, setFilePreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   // ─── Auth Check ──────────────────────────────────────────────
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     const savedUser = localStorage.getItem("user");
-
     if (!savedToken || !savedUser) {
       router.push("/login");
       return;
     }
-
     setToken(savedToken);
     setUser(JSON.parse(savedUser));
   }, []);
+
+  // ─── Active Room Ref sync ────────────────────────────────────
+  useEffect(() => {
+    activeRoomRef.current = activeRoom;
+  }, [activeRoom]);
 
   // ─── Socket.io Connect ───────────────────────────────────────
   useEffect(() => {
@@ -66,14 +71,45 @@ const ChatSection = () => {
 
     socket = io(BACKEND_URL, {
       auth: { token },
+      transports: ["polling", "websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     socket.on("connect", () => {
-      console.log("Socket connected!");
+      console.log("✅ Socket connected!");
+      socket.emit("user:joinAllDMs");
     });
 
     socket.on("message:new", (message) => {
-      setMessages((prev) => [...prev, message]);
+      const currentRoom = activeRoomRef.current;
+      if (currentRoom && message.roomId === currentRoom.id) {
+        setMessages((prev) => [...prev, message]);
+      } else {
+        setUnreadDMs((prev) => ({
+          ...prev,
+          [message.roomId]: (prev[message.roomId] || 0) + 1,
+        }));
+        if (!currentRoom && message.roomType === "dm") {
+          const ids = message.roomId.split("_");
+          const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
+          const otherUserId = ids.find((id) => id !== savedUser._id);
+          setUsers((prev) => {
+            const targetUser = prev.find((u) => u._id === otherUserId);
+            if (targetUser) {
+              setActiveRoom({
+                type: "dm",
+                id: message.roomId,
+                name: targetUser.name,
+              });
+              setMessages([message]);
+              if (socket) socket.emit("join:dm", { roomId: message.roomId });
+            }
+            return prev;
+          });
+        }
+      }
     });
 
     socket.on("typing:start", ({ userId, name }) => {
@@ -82,12 +118,12 @@ const ChatSection = () => {
       }
     });
 
-    socket.on("typing:stop", ({ userId }) => {
-      setTypingUsers((prev) => prev.filter((_, i) => i !== 0));
+    socket.on("typing:stop", () => {
+      setTypingUsers([]);
     });
 
-    socket.on("error", ({ message }) => {
-      console.error("Socket error:", message);
+    socket.on("connect_error", (err) => {
+      console.error("Socket error:", err.message);
     });
 
     return () => {
@@ -95,7 +131,7 @@ const ChatSection = () => {
     };
   }, [token]);
 
-  // ─── Fetch Channels ──────────────────────────────────────────
+  // ─── Fetch Channels & Users ──────────────────────────────────
   useEffect(() => {
     if (!token) return;
     fetchChannels();
@@ -104,8 +140,9 @@ const ChatSection = () => {
 
   const fetchChannels = async () => {
     try {
+      const savedToken = localStorage.getItem("token");
       const res = await fetch(`${BACKEND_URL}/api/channels`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${savedToken}` },
       });
       const data = await res.json();
       if (data.success) setChannels(data.channels);
@@ -116,54 +153,57 @@ const ChatSection = () => {
 
   const fetchUsers = async () => {
     try {
+      const savedToken = localStorage.getItem("token");
+      const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
       const res = await fetch(`${BACKEND_URL}/api/auth/users`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${savedToken}` },
       });
       const data = await res.json();
-      if (data.success) setUsers(data.users.filter((u) => u._id !== user?._id));
+      if (data.success)
+        setUsers(data.users.filter((u) => u._id !== savedUser?._id));
     } catch (err) {
       console.error(err);
     }
   };
 
-  // ─── Join Room & Fetch Messages ──────────────────────────────
+  // ─── Join Channel ────────────────────────────────────────────
   const joinChannel = async (channel) => {
     setActiveRoom({ type: "channel", id: channel._id, name: channel.name });
     setMessages([]);
-
-    socket.emit("join:channel", { channelId: channel._id });
-
+    setUnreadDMs((prev) => ({ ...prev, [channel._id]: 0 }));
+    if (socket) socket.emit("join:channel", { channelId: channel._id });
+    const savedToken = localStorage.getItem("token");
     const res = await fetch(
       `${BACKEND_URL}/api/messages/channel/${channel._id}`,
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${savedToken}` },
       },
     );
     const data = await res.json();
     if (data.success) setMessages(data.messages);
   };
 
+  // ─── Join DM ─────────────────────────────────────────────────
   const joinDM = async (targetUser) => {
     try {
+      const savedToken = localStorage.getItem("token");
       const res = await fetch(`${BACKEND_URL}/api/channels/dm/start`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${savedToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ targetUserId: targetUser._id }),
       });
       const data = await res.json();
-
       if (data.success) {
         const roomId = data.roomId;
         setActiveRoom({ type: "dm", id: roomId, name: targetUser.name });
         setMessages([]);
-
-        socket.emit("join:dm", { roomId });
-
+        setUnreadDMs((prev) => ({ ...prev, [roomId]: 0 }));
+        if (socket) socket.emit("join:dm", { roomId });
         const msgRes = await fetch(`${BACKEND_URL}/api/messages/dm/${roomId}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${savedToken}` },
         });
         const msgData = await msgRes.json();
         if (msgData.success) setMessages(msgData.messages);
@@ -175,36 +215,73 @@ const ChatSection = () => {
 
   // ─── Send Message ────────────────────────────────────────────
   const sendMessage = () => {
-    if (!messageText.trim() || !activeRoom) return;
-
+    if (!messageText.trim() || !activeRoom || !socket) return;
     socket.emit("message:send", {
       roomId: activeRoom.id,
       roomType: activeRoom.type,
       content: messageText.trim(),
     });
-
     setMessageText("");
     socket.emit("typing:stop", { roomId: activeRoom.id });
   };
 
-  // ─── Typing Indicator ────────────────────────────────────────
+  // ─── File Select ─────────────────────────────────────────────
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSelectedFile(file);
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => setFilePreview(reader.result);
+      reader.readAsDataURL(file);
+    } else {
+      setFilePreview(null);
+    }
+  };
+
+  // ─── Send File ───────────────────────────────────────────────
+  const sendFileMessage = async () => {
+    if (!selectedFile || !activeRoom) return;
+    setUploading(true);
+    const savedToken = localStorage.getItem("token");
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+    formData.append("roomId", activeRoom.id);
+    formData.append("roomType", activeRoom.type);
+    formData.append("content", messageText || "");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messages/send`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${savedToken}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success) setMessages((prev) => [...prev, data.message]);
+    } catch (err) {
+      console.error(err);
+    }
+    setSelectedFile(null);
+    setFilePreview(null);
+    setMessageText("");
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ─── Typing ──────────────────────────────────────────────────
   const handleTyping = (e) => {
     setMessageText(e.target.value);
-
-    if (!activeRoom) return;
+    if (!activeRoom || !socket) return;
     socket.emit("typing:start", { roomId: activeRoom.id });
-
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit("typing:stop", { roomId: activeRoom.id });
     }, 1500);
   };
 
-  // ─── Enter key send ──────────────────────────────────────────
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      selectedFile ? sendFileMessage() : sendMessage();
     }
   };
 
@@ -213,20 +290,14 @@ const ChatSection = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ─── Logout ──────────────────────────────────────────────────
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    router.push("/login");
-  };
-
-  // ─── Time Format ─────────────────────────────────────────────
+  // ─── Helpers ─────────────────────────────────────────────────
   const formatTime = (dateStr) => {
-    const date = new Date(dateStr);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return new Date(dateStr).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
-  // ─── Avatar ──────────────────────────────────────────────────
   const getInitials = (name) => {
     return name
       ?.split(" ")
@@ -234,6 +305,16 @@ const ChatSection = () => {
       .join("")
       .toUpperCase()
       .slice(0, 2);
+  };
+
+  const getDMRoomId = (targetUserId) => {
+    const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
+    return [savedUser._id, targetUserId].sort().join("_");
+  };
+
+  const isMyMessage = (msg) => {
+    const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
+    return msg.sender?._id === savedUser._id || msg.sender === savedUser._id;
   };
 
   return (
@@ -294,10 +375,17 @@ const ChatSection = () => {
                         : "text-gray-300 hover:bg-[#350d36]"
                     }`}
                   >
-                    <span onClick={() => joinChannel(channel)}>
+                    <span
+                      onClick={() => joinChannel(channel)}
+                      className="flex-1 flex items-center gap-1"
+                    >
                       {channel.isPrivate ? "🔒" : "#"} {channel.name}
+                      {unreadDMs[channel._id] > 0 && (
+                        <span className="ml-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">
+                          {unreadDMs[channel._id]}
+                        </span>
+                      )}
                     </span>
-
                     {channel.isPrivate && user?.role === "admin" && (
                       <button
                         onClick={(e) => {
@@ -336,32 +424,44 @@ const ChatSection = () => {
 
             {isDmsOpen && (
               <div className="mt-1 space-y-[2px] px-2">
-                {users.map((u) => (
-                  <div
-                    key={u._id}
-                    onClick={() => joinDM(u)}
-                    className={`px-2 py-1 rounded flex items-center gap-2 cursor-pointer transition-all ${
-                      activeRoom?.name === u.name
-                        ? "bg-[#1264A3]"
-                        : "hover:bg-[#350d36]"
-                    }`}
-                  >
-                    <div className="w-5 h-5 rounded-sm bg-purple-600 flex items-center justify-center text-[8px] font-bold">
-                      {getInitials(u.name)}
+                {users.map((u) => {
+                  const dmRoomId = getDMRoomId(u._id);
+                  const unreadCount = unreadDMs[dmRoomId] || 0;
+                  return (
+                    <div
+                      key={u._id}
+                      onClick={() => joinDM(u)}
+                      className={`px-2 py-1 rounded flex items-center gap-2 cursor-pointer transition-all ${
+                        activeRoom?.name === u.name
+                          ? "bg-[#1264A3]"
+                          : "hover:bg-[#350d36]"
+                      }`}
+                    >
+                      <div className="w-5 h-5 rounded-sm bg-purple-600 flex items-center justify-center text-[8px] font-bold shrink-0">
+                        {getInitials(u.name)}
+                      </div>
+                      <span className="text-sm text-gray-300 flex-1">
+                        {u.name}
+                      </span>
+                      {unreadCount > 0 ? (
+                        <span className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">
+                          {unreadCount}
+                        </span>
+                      ) : (
+                        u.isOnline && (
+                          <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                        )
+                      )}
                     </div>
-                    <span className="text-sm text-gray-300">{u.name}</span>
-                    {u.isOnline && (
-                      <span className="w-1.5 h-1.5 bg-green-400 rounded-full ml-auto"></span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
 
-        {/* User info + Logout */}
-        <div className="p-3 border-t border-white/10 flex items-center justify-between">
+        {/* User info */}
+        <div className="p-3 border-t border-white/10 flex items-center">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-purple-600 rounded-md flex items-center justify-center text-xs font-bold">
               {getInitials(user?.name)}
@@ -371,7 +471,6 @@ const ChatSection = () => {
               <p className="text-[10px] text-green-400">Online</p>
             </div>
           </div>
-          
         </div>
       </div>
 
@@ -392,10 +491,16 @@ const ChatSection = () => {
                     ? `# ${activeRoom.name}`
                     : activeRoom.name}
                 </h3>
-                <p className="text-[10px] text-green-500 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-                  Online
-                </p>
+                {typingUsers.length > 0 ? (
+                  <p className="text-[10px] text-blue-500 italic">
+                    {typingUsers.join(", ")} typing...
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-green-500 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                    Online
+                  </p>
+                )}
               </div>
             </div>
           ) : (
@@ -410,38 +515,118 @@ const ChatSection = () => {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 bg-white">
+        <div className="flex-1 overflow-y-auto px-6 py-4 bg-white">
           {!activeRoom && (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-              👈 Please Select Any Chennel or DM
+              👈 Please Select Any Channel or DM
             </div>
           )}
 
-          {messages.map((msg) => (
-            <div key={msg._id} className="flex gap-3 group">
-              <div className="w-9 h-9 bg-purple-700 rounded-md flex items-center justify-center text-white text-xs font-bold shrink-0">
-                {getInitials(msg.sender?.name)}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold hover:underline cursor-pointer">
-                    {msg.sender?.name}
-                  </span>
-                  <span className="text-[10px] text-gray-400">
-                    {formatTime(msg.createdAt)}
-                  </span>
+          <div className="space-y-3">
+            {messages.map((msg) => {
+              const mine = isMyMessage(msg);
+              return (
+                <div
+                  key={msg._id}
+                  className={`flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}
+                >
+                  {/* Dusre ka avatar */}
+                  {!mine && (
+                    <div className="w-8 h-8 bg-purple-700 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
+                      {getInitials(msg.sender?.name)}
+                    </div>
+                  )}
+
+                  {/* Bubble */}
+                  <div
+                    className={`max-w-[65%] flex flex-col ${mine ? "items-end" : "items-start"}`}
+                  >
+                    {/* Name + Time */}
+                    <div
+                      className={`flex items-center gap-2 mb-1 ${mine ? "flex-row-reverse" : "flex-row"}`}
+                    >
+                      <span className="text-xs font-semibold text-gray-600">
+                        {mine ? "You" : msg.sender?.name}
+                      </span>
+                      <span className="text-[10px] text-gray-400">
+                        {formatTime(msg.createdAt)}
+                      </span>
+                    </div>
+
+                    {/* Text bubble */}
+                    {msg.content && (
+                      <div
+                        className={`px-4 py-2 rounded-2xl text-sm break-words ${
+                          mine
+                            ? "bg-gray-400 text-white rounded-br-sm"
+                            : "bg-gray-300 text-gray-800 rounded-bl-sm"
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    )}
+
+                    {/* File/Image */}
+                    {/* {msg.fileUrl && (
+                      <div className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                        {msg.fileUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                          <img
+                            src={`${BACKEND_URL}${msg.fileUrl}`}
+                            alt="attachment"
+                            className="max-w-[250px] rounded-lg border cursor-pointer hover:opacity-90"
+                            onClick={() => window.open(`${BACKEND_URL}${msg.fileUrl}`, "_blank")}
+                          />
+                        ) : (
+                            <a
+                            href={`${BACKEND_URL}${msg.fileUrl}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+                              mine ? "bg-[#4A154B] text-white" : "bg-gray-100 text-blue-600"
+                            }`}
+                          >
+                            📎 {msg.fileUrl.split("/").pop()}
+                          </a>
+                        )}
+                      </div>
+                    )} */}
+                  </div>
+
+                  {/* Mera avatar */}
+                  {mine && (
+                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
+                      {getInitials(user?.name)}
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-gray-700 mt-1">{msg.content}</p>
-              </div>
-            </div>
-          ))}
+              );
+            })}
 
-          {/* Typing indicator */}
-          {typingUsers.length > 0 && (
-            <p className="text-xs text-gray-400 italic">
-              {typingUsers.join(", ")} is typing...
-            </p>
-          )}
+            {/* Typing dots */}
+            {typingUsers.length > 0 && (
+              <div className="flex items-end gap-2">
+                <div className="w-8 h-8 bg-purple-700 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {getInitials(typingUsers[0])}
+                </div>
+                <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-sm">
+                  <div className="flex gap-1 items-center">
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0ms" }}
+                    ></span>
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "150ms" }}
+                    ></span>
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "300ms" }}
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div ref={messagesEndRef} />
         </div>
@@ -461,6 +646,44 @@ const ChatSection = () => {
                 {"</>"}
               </span>
             </div>
+
+            {/* Image Preview */}
+            {filePreview && (
+              <div className="px-3 pt-2 relative inline-block">
+                <img
+                  src={filePreview}
+                  alt="preview"
+                  className="h-20 rounded-lg object-cover border"
+                />
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    setFilePreview(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Non-image file */}
+            {selectedFile && !filePreview && (
+              <div className="px-3 pt-2 flex items-center gap-2 text-xs text-gray-600">
+                <span>📎 {selectedFile.name}</span>
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             <textarea
               className="w-full px-3 py-2 text-sm outline-none h-16 resize-none"
               placeholder={
@@ -473,16 +696,35 @@ const ChatSection = () => {
               onKeyDown={handleKeyDown}
               disabled={!activeRoom}
             />
+
             <div className="flex justify-between items-center px-3 py-2">
-              <button className="text-gray-400 text-lg hover:text-gray-600">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!activeRoom}
+                className="text-gray-400 text-lg hover:text-gray-600 disabled:opacity-50"
+              >
                 +
               </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.doc,.docx,.txt"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+
               <button
-                onClick={sendMessage}
-                disabled={!activeRoom || !messageText.trim()}
+                type="button"
+                onClick={selectedFile ? sendFileMessage : sendMessage}
+                disabled={
+                  !activeRoom ||
+                  (!messageText.trim() && !selectedFile) ||
+                  uploading
+                }
                 className="bg-[#007A5A] text-white px-4 py-1.5 rounded text-sm font-semibold hover:bg-[#006046] transition-colors shadow-sm disabled:opacity-50"
               >
-                Send
+                {uploading ? "Uploading..." : "Send"}
               </button>
             </div>
           </div>
