@@ -31,7 +31,7 @@ const Modal = ({ isOpen, onClose, token }) => {
     setError('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/channels', {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/channels`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
