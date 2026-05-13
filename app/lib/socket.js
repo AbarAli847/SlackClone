@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 let socket = null;
 
@@ -10,7 +10,8 @@ export const initSocket = (token) => {
   socket = io(BACKEND_URL, {
     auth: { token },
     transports: ['polling', 'websocket'], 
-    reconnection: true,
+    reconnection: true,      
+   timeout: 20000,
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,
   });
