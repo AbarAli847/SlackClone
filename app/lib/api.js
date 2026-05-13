@@ -1,4 +1,4 @@
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 const getToken = () => localStorage.getItem('token');
 
