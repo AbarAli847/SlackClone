@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { io } from "socket.io-client";
 import Modal from "../components/Model";
 import AddMemberModal from "../components/AddMemberModal";
+import EmojiPicker from "emoji-picker-react";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 let socket;
@@ -23,30 +24,24 @@ const ChatSection = () => {
 
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-
   const [isChannelsOpen, setIsChannelsOpen] = useState(true);
   const [isDmsOpen, setIsDmsOpen] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-
   const [channels, setChannels] = useState([]);
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
-
   const [activeRoom, setActiveRoom] = useState(null);
   const activeRoomRef = useRef(null);
-
   const [messageText, setMessageText] = useState("");
   const [typingUsers, setTypingUsers] = useState([]);
   const typingTimeoutRef = useRef(null);
-
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState(null);
-
   const [unreadDMs, setUnreadDMs] = useState({});
-
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
 
   // ─── Auth Check ──────────────────────────────────────────────
   useEffect(() => {
@@ -113,25 +108,19 @@ const ChatSection = () => {
     });
 
     socket.on("typing:start", ({ userId, name }) => {
-      if (userId !== user?._id) {
+      if (userId !== user?._id)
         setTypingUsers((prev) => [...new Set([...prev, name])]);
-      }
     });
 
-    socket.on("typing:stop", () => {
-      setTypingUsers([]);
-    });
+    socket.on("typing:stop", () => setTypingUsers([]));
+    socket.on("connect_error", (err) =>
+      console.error("Socket error:", err.message),
+    );
 
-    socket.on("connect_error", (err) => {
-      console.error("Socket error:", err.message);
-    });
-
-    return () => {
-      socket.disconnect();
-    };
+    return () => socket.disconnect();
   }, [token]);
 
-  // ─── Fetch Channels & Users ──────────────────────────────────
+  // ─── Fetch ───────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
     fetchChannels();
@@ -213,7 +202,7 @@ const ChatSection = () => {
     }
   };
 
-  // ─── Send Message ────────────────────────────────────────────
+  // ─── Send Text Message ───────────────────────────────────────
   const sendMessage = () => {
     if (!messageText.trim() || !activeRoom || !socket) return;
     socket.emit("message:send", {
@@ -256,7 +245,19 @@ const ChatSection = () => {
         body: formData,
       });
       const data = await res.json();
-      if (data.success) setMessages((prev) => [...prev, data.message]);
+      if (data.success) {
+        // Local mein add karo
+        setMessages((prev) => [...prev, data.message]);
+        // Dusron ko socket se bhejo
+        if (socket) {
+          socket.emit("file:new", {
+            roomId: activeRoom.id,
+            roomType: activeRoom.type,
+            fileUrl: data.message.fileUrl,
+            content: messageText || "",
+          });
+        }
+      }
     } catch (err) {
       console.error(err);
     }
@@ -291,21 +292,19 @@ const ChatSection = () => {
   }, [messages]);
 
   // ─── Helpers ─────────────────────────────────────────────────
-  const formatTime = (dateStr) => {
-    return new Date(dateStr).toLocaleTimeString([], {
+  const formatTime = (dateStr) =>
+    new Date(dateStr).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
 
-  const getInitials = (name) => {
-    return name
+  const getInitials = (name) =>
+    name
       ?.split(" ")
       .map((n) => n[0])
       .join("")
       .toUpperCase()
       .slice(0, 2);
-  };
 
   const getDMRoomId = (targetUserId) => {
     const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -315,6 +314,45 @@ const ChatSection = () => {
   const isMyMessage = (msg) => {
     const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
     return msg.sender?._id === savedUser._id || msg.sender === savedUser._id;
+  };
+
+  // ─── Render Image or File ─────────────────────────────────────
+  const renderFile = (msg, mine) => {
+    if (!msg.fileUrl) return null;
+    const isImage =
+      /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.fileUrl) ||
+      msg.fileUrl.includes("/uploads/");
+
+    return (
+      <div
+        className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}
+      >
+        {isImage ? (
+          <img
+            src={`${BACKEND_URL}${msg.fileUrl}`}
+            alt="attachment"
+            className="max-w-[250px] max-h-[300px] rounded-2xl border cursor-pointer hover:opacity-90 shadow-sm object-cover"
+            onClick={() =>
+              window.open(`${BACKEND_URL}${msg.fileUrl}`, "_blank")
+            }
+            onError={(e) => {
+              e.target.style.display = "none";
+            }}
+          />
+        ) : (
+          <a
+            href={`${BACKEND_URL}${msg.fileUrl}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+              mine ? "bg-[#4A154B] text-white" : "bg-gray-100 text-blue-600"
+            }`}
+          >
+            📎 {msg.fileUrl.split("/").pop()}
+          </a>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -553,13 +591,13 @@ const ChatSection = () => {
                       </span>
                     </div>
 
-                    {/* Text bubble */}
+                    {/* Text */}
                     {msg.content && (
                       <div
                         className={`px-4 py-2 rounded-2xl text-sm break-words ${
                           mine
-                            ? "bg-gray-400 text-white rounded-br-sm"
-                            : "bg-gray-300 text-gray-800 rounded-bl-sm"
+                            ? "bg-[#4A154B] text-white rounded-br-sm"
+                            : "bg-gray-100 text-gray-800 rounded-bl-sm"
                         }`}
                       >
                         {msg.content}
@@ -567,29 +605,7 @@ const ChatSection = () => {
                     )}
 
                     {/* File/Image */}
-                    {/* {msg.fileUrl && (
-                      <div className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}>
-                        {msg.fileUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-                          <img
-                            src={`${BACKEND_URL}${msg.fileUrl}`}
-                            alt="attachment"
-                            className="max-w-[250px] rounded-lg border cursor-pointer hover:opacity-90"
-                            onClick={() => window.open(`${BACKEND_URL}${msg.fileUrl}`, "_blank")}
-                          />
-                        ) : (
-                            <a
-                            href={`${BACKEND_URL}${msg.fileUrl}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
-                              mine ? "bg-[#4A154B] text-white" : "bg-gray-100 text-blue-600"
-                            }`}
-                          >
-                            📎 {msg.fileUrl.split("/").pop()}
-                          </a>
-                        )}
-                      </div>
-                    )} */}
+                    {renderFile(msg, mine)}
                   </div>
 
                   {/* Mera avatar */}
@@ -627,12 +643,23 @@ const ChatSection = () => {
               </div>
             )}
           </div>
-
           <div ref={messagesEndRef} />
         </div>
 
         {/* Message Input */}
-        <div className="border-t border-gray-300 bg-white px-6 py-3">
+        {showEmoji && (
+          <div className="absolute bottom-27 left-180 z-50">
+            <EmojiPicker
+              onEmojiClick={(emojiData) => {
+                setMessageText((prev) => prev + emojiData.emoji);
+                setShowEmoji(false);
+              }}
+              height={350}
+              width={300}
+            />
+          </div>
+        )}
+        <div className="border-t border-gray-300 bg-white px-6 py-3 relative">
           <div className="border rounded-lg overflow-hidden focus-within:border-gray-400 shadow-sm transition-all">
             <div className="flex gap-4 text-xs text-gray-500 px-3 py-2 border-b bg-gray-50">
               <span className="font-bold cursor-pointer hover:text-black">
@@ -644,6 +671,12 @@ const ChatSection = () => {
               </span>
               <span className="font-mono cursor-pointer hover:text-black">
                 {"</>"}
+              </span>
+              <span
+                className="cursor-pointer hover:text-black "
+                onClick={() => setShowEmoji(!showEmoji)}
+              >
+                😊
               </span>
             </div>
 
