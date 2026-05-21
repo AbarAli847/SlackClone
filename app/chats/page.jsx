@@ -1,26 +1,25 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import {
-  Phone,
-  Video,
-  Pencil,
-  ChevronDown,
-  ChevronRight,
-  Plus,
+  Phone, Video, Pencil, ChevronDown, ChevronRight, Plus,
+  Image, FileText, Download, Trash2, X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { io } from "socket.io-client";
 import Modal from "../components/Model";
 import AddMemberModal from "../components/AddMemberModal";
 import EmojiPicker from "emoji-picker-react";
+import { useSidebar } from "../context/SidebarContext";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 let socket;
 
 const ChatSection = () => {
   const router = useRouter();
+  const { collapsed } = useSidebar();
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -42,15 +41,16 @@ const ChatSection = () => {
   const [filePreview, setFilePreview] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [imageModal, setImageModal] = useState(null);
+  const [boldActive, setBoldActive] = useState(false);
+  const [italicActive, setItalicActive] = useState(false);
 
   // ─── Auth Check ──────────────────────────────────────────────
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     const savedUser = localStorage.getItem("user");
-    if (!savedToken || !savedUser) {
-      router.push("/login");
-      return;
-    }
+    if (!savedToken || !savedUser) { router.push("/login"); return; }
     setToken(savedToken);
     setUser(JSON.parse(savedUser));
   }, []);
@@ -58,7 +58,29 @@ const ChatSection = () => {
   // ─── Active Room Ref sync ────────────────────────────────────
   useEffect(() => {
     activeRoomRef.current = activeRoom;
+    if (activeRoom) localStorage.setItem("activeRoom", JSON.stringify(activeRoom));
   }, [activeRoom]);
+
+ 
+// ─── Restore active room on refresh ──────────────────────────
+useEffect(() => {
+  if (!token) return;
+  if (!channels.length && !users.length) return;
+
+  const saved = localStorage.getItem("activeRoom");
+  if (!saved || activeRoom) return;
+
+  try {
+    const room = JSON.parse(saved);
+    if (room.type === "channel" && channels.length) {
+      const channel = channels.find((c) => c._id === room.id);
+      if (channel) joinChannel(channel);
+    } else if (room.type === "dm" && users.length) {
+      const targetUser = users.find((u) => room.id.includes(u._id));
+      if (targetUser) joinDM(targetUser);
+    }
+  } catch (e) {}
+}, [channels, users, token]); // ← channels aur users dono pe watch karo
 
   // ─── Socket.io Connect ───────────────────────────────────────
   useEffect(() => {
@@ -80,30 +102,16 @@ const ChatSection = () => {
     socket.on("message:new", (message) => {
       const currentRoom = activeRoomRef.current;
       if (currentRoom && message.roomId === currentRoom.id) {
-        setMessages((prev) => [...prev, message]);
+        setMessages((prev) => {
+          const exists = prev.some((m) => m._id === message._id);
+          if (exists) return prev;
+          return [...prev, message];
+        });
       } else {
         setUnreadDMs((prev) => ({
           ...prev,
           [message.roomId]: (prev[message.roomId] || 0) + 1,
         }));
-        if (!currentRoom && message.roomType === "dm") {
-          const ids = message.roomId.split("_");
-          const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
-          const otherUserId = ids.find((id) => id !== savedUser._id);
-          setUsers((prev) => {
-            const targetUser = prev.find((u) => u._id === otherUserId);
-            if (targetUser) {
-              setActiveRoom({
-                type: "dm",
-                id: message.roomId,
-                name: targetUser.name,
-              });
-              setMessages([message]);
-              if (socket) socket.emit("join:dm", { roomId: message.roomId });
-            }
-            return prev;
-          });
-        }
       }
     });
 
@@ -111,11 +119,8 @@ const ChatSection = () => {
       if (userId !== user?._id)
         setTypingUsers((prev) => [...new Set([...prev, name])]);
     });
-
     socket.on("typing:stop", () => setTypingUsers([]));
-    socket.on("connect_error", (err) =>
-      console.error("Socket error:", err.message),
-    );
+    socket.on("connect_error", (err) => console.error("Socket error:", err.message));
 
     return () => socket.disconnect();
   }, [token]);
@@ -135,9 +140,7 @@ const ChatSection = () => {
       });
       const data = await res.json();
       if (data.success) setChannels(data.channels);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const fetchUsers = async () => {
@@ -150,9 +153,7 @@ const ChatSection = () => {
       const data = await res.json();
       if (data.success)
         setUsers(data.users.filter((u) => u._id !== savedUser?._id));
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   // ─── Join Channel ────────────────────────────────────────────
@@ -162,12 +163,9 @@ const ChatSection = () => {
     setUnreadDMs((prev) => ({ ...prev, [channel._id]: 0 }));
     if (socket) socket.emit("join:channel", { channelId: channel._id });
     const savedToken = localStorage.getItem("token");
-    const res = await fetch(
-      `${BACKEND_URL}/api/messages/channel/${channel._id}`,
-      {
-        headers: { Authorization: `Bearer ${savedToken}` },
-      },
-    );
+    const res = await fetch(`${BACKEND_URL}/api/messages/channel/${channel._id}`, {
+      headers: { Authorization: `Bearer ${savedToken}` },
+    });
     const data = await res.json();
     if (data.success) setMessages(data.messages);
   };
@@ -178,10 +176,7 @@ const ChatSection = () => {
       const savedToken = localStorage.getItem("token");
       const res = await fetch(`${BACKEND_URL}/api/channels/dm/start`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${savedToken}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${savedToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ targetUserId: targetUser._id }),
       });
       const data = await res.json();
@@ -197,9 +192,7 @@ const ChatSection = () => {
         const msgData = await msgRes.json();
         if (msgData.success) setMessages(msgData.messages);
       }
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   // ─── Send Text Message ───────────────────────────────────────
@@ -211,6 +204,8 @@ const ChatSection = () => {
       content: messageText.trim(),
     });
     setMessageText("");
+    setBoldActive(false);
+    setItalicActive(false);
     socket.emit("typing:stop", { roomId: activeRoom.id });
   };
 
@@ -226,6 +221,7 @@ const ChatSection = () => {
     } else {
       setFilePreview(null);
     }
+    setShowPlusMenu(false);
   };
 
   // ─── Send File ───────────────────────────────────────────────
@@ -247,25 +243,39 @@ const ChatSection = () => {
       const data = await res.json();
       if (data.success) {
         // Local mein add karo
-        setMessages((prev) => [...prev, data.message]);
-        // Dusron ko socket se bhejo
+        setMessages((prev) => {
+          const exists = prev.some((m) => m._id === data.message._id);
+          if (exists) return prev;
+          return [...prev, data.message];
+        });
+        // Dusron ko broadcast karo
         if (socket) {
           socket.emit("file:new", {
             roomId: activeRoom.id,
-            roomType: activeRoom.type,
-            fileUrl: data.message.fileUrl,
-            content: messageText || "",
+            message: data.message,
           });
         }
       }
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
     setSelectedFile(null);
     setFilePreview(null);
     setMessageText("");
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  };
+
+  // ─── Delete Message ──────────────────────────────────────────
+  const deleteMsg = async (messageId) => {
+    try {
+      const savedToken = localStorage.getItem("token");
+      const res = await fetch(`${BACKEND_URL}/api/messages/${messageId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${savedToken}` },
+      });
+      const data = await res.json();
+      if (data.success) setMessages((prev) => prev.filter((m) => m._id !== messageId));
+    } catch (err) { console.error(err); }
   };
 
   // ─── Typing ──────────────────────────────────────────────────
@@ -293,18 +303,10 @@ const ChatSection = () => {
 
   // ─── Helpers ─────────────────────────────────────────────────
   const formatTime = (dateStr) =>
-    new Date(dateStr).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const getInitials = (name) =>
-    name
-      ?.split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    name?.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
   const getDMRoomId = (targetUserId) => {
     const savedUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -316,55 +318,95 @@ const ChatSection = () => {
     return msg.sender?._id === savedUser._id || msg.sender === savedUser._id;
   };
 
-  // ─── Render Image or File ─────────────────────────────────────
+  const downloadFile = async (url, filename) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename || "download";
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) { console.error(err); }
+  };
+
+  // ─── Render File/Image ────────────────────────────────────────
   const renderFile = (msg, mine) => {
     if (!msg.fileUrl) return null;
-    const isImage =
-      /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.fileUrl) ||
-      msg.fileUrl.includes("/uploads/");
+   const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.fileUrl);
+    const fullUrl = `${BACKEND_URL}${msg.fileUrl}`;
+    const filename = msg.fileUrl.split("/").pop();
+
+    if (isImage) {
+      return (
+        <div className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}>
+          <div className="relative group">
+            <img
+              src={fullUrl}
+              alt="attachment"
+              className="max-w-[250px] max-h-[300px] rounded-2xl border cursor-pointer hover:opacity-90 shadow-sm object-cover"
+              onClick={() => setImageModal(fullUrl)}
+              onError={(e) => { e.target.style.display = "none"; }}
+            />
+            <div className="absolute top-2 right-2 hidden group-hover:flex gap-1">
+              <button
+                onClick={(e) => { e.stopPropagation(); downloadFile(fullUrl, filename); }}
+                className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white"
+              >
+                <Download size={12} />
+              </button>
+              {mine && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteMsg(msg._id); }}
+                  className="w-7 h-7 bg-red-500/80 hover:bg-red-600 rounded-full flex items-center justify-center text-white"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
-      <div
-        className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}
-      >
-        {isImage ? (
-          <img
-            src={`${BACKEND_URL}${msg.fileUrl}`}
-            alt="attachment"
-            className="max-w-[250px] max-h-[300px] rounded-2xl border cursor-pointer hover:opacity-90 shadow-sm object-cover"
-            onClick={() =>
-              window.open(`${BACKEND_URL}${msg.fileUrl}`, "_blank")
-            }
-            onError={(e) => {
-              e.target.style.display = "none";
-            }}
-          />
-        ) : (
-          <a
-            href={`${BACKEND_URL}${msg.fileUrl}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
-              mine ? "bg-[#4A154B] text-white" : "bg-gray-100 text-blue-600"
+      <div className={`mt-1 flex flex-col ${mine ? "items-end" : "items-start"}`}>
+        <div className={`flex flex-col gap-2 px-3 py-2 rounded-lg text-sm ${
+          mine ? "bg-[#4A154B] text-white" : "bg-gray-100 text-gray-800"
+        }`}>
+          <div className="flex items-center gap-2">
+            <FileText size={16} />
+            <span className="max-w-[180px] truncate">{filename}</span>
+          </div>
+          <button
+            onClick={() => downloadFile(fullUrl, filename)}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${
+              mine ? "bg-white/20 hover:bg-white/30 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-700"
             }`}
           >
-            📎 {msg.fileUrl.split("/").pop()}
-          </a>
-        )}
+            <Download size={12} />
+            Download
+          </button>
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="flex h-[calc(99vh-44px)] w-[1000px] bg-white overflow-hidden ml-60">
+    <div
+      className="flex bg-white overflow-hidden transition-all duration-300"
+      style={{
+        marginLeft: collapsed ? "4rem" : "15rem",
+        width: `calc(100% - ${collapsed ? "4rem" : "15rem"})`,
+        height: "calc(100vh - 48px)",
+      }}
+    >
       {/* ── Sidebar ── */}
       <div className="w-64 bg-[#4A154B] text-white flex flex-col shrink-0">
         <div className="h-14 flex items-center justify-between px-4 border-b border-white/10">
           <h2 className="text-sm font-bold">Workspace</h2>
-          <Pencil
-            size={14}
-            className="text-gray-300 hover:text-white cursor-pointer"
-          />
+          <Pencil size={14} className="text-gray-300 hover:text-white cursor-pointer" />
         </div>
 
         <div className="p-3">
@@ -376,6 +418,7 @@ const ChatSection = () => {
         </div>
 
         <div className="px-1 space-y-4 text-sm flex-1 overflow-y-auto">
+
           {/* Channels */}
           <div>
             <div
@@ -383,22 +426,13 @@ const ChatSection = () => {
               className="flex items-center justify-between px-2 py-1 cursor-pointer group text-gray-400 hover:text-white"
             >
               <div className="flex items-center gap-1">
-                {isChannelsOpen ? (
-                  <ChevronDown size={14} />
-                ) : (
-                  <ChevronRight size={14} />
-                )}
-                <p className="text-[10px] uppercase font-bold tracking-wider">
-                  Channels
-                </p>
+                {isChannelsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <p className="text-[10px] uppercase font-bold tracking-wider">Channels</p>
               </div>
               <Plus
                 size={14}
                 className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsModalOpen(true);
-                }}
+                onClick={(e) => { e.stopPropagation(); setIsModalOpen(true); }}
               />
             </div>
 
@@ -413,10 +447,7 @@ const ChatSection = () => {
                         : "text-gray-300 hover:bg-[#350d36]"
                     }`}
                   >
-                    <span
-                      onClick={() => joinChannel(channel)}
-                      className="flex-1 flex items-center gap-1"
-                    >
+                    <span onClick={() => joinChannel(channel)} className="flex-1 flex items-center gap-1">
                       {channel.isPrivate ? "🔒" : "#"} {channel.name}
                       {unreadDMs[channel._id] > 0 && (
                         <span className="ml-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">
@@ -426,11 +457,7 @@ const ChatSection = () => {
                     </span>
                     {channel.isPrivate && user?.role === "admin" && (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedChannel(channel);
-                          setIsAddMemberOpen(true);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedChannel(channel); setIsAddMemberOpen(true); }}
                         className="opacity-0 group-hover:opacity-100 text-xs bg-purple-600 px-1.5 py-0.5 rounded transition-opacity"
                       >
                         + Add
@@ -449,14 +476,8 @@ const ChatSection = () => {
               className="flex items-center justify-between px-2 py-1 cursor-pointer group text-gray-400 hover:text-white"
             >
               <div className="flex items-center gap-1">
-                {isDmsOpen ? (
-                  <ChevronDown size={14} />
-                ) : (
-                  <ChevronRight size={14} />
-                )}
-                <p className="text-[10px] uppercase font-bold tracking-wider">
-                  Direct Messages
-                </p>
+                {isDmsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <p className="text-[10px] uppercase font-bold tracking-wider">Direct Messages</p>
               </div>
             </div>
 
@@ -470,25 +491,19 @@ const ChatSection = () => {
                       key={u._id}
                       onClick={() => joinDM(u)}
                       className={`px-2 py-1 rounded flex items-center gap-2 cursor-pointer transition-all ${
-                        activeRoom?.name === u.name
-                          ? "bg-[#1264A3]"
-                          : "hover:bg-[#350d36]"
+                        activeRoom?.name === u.name ? "bg-[#1264A3]" : "hover:bg-[#350d36]"
                       }`}
                     >
                       <div className="w-5 h-5 rounded-sm bg-purple-600 flex items-center justify-center text-[8px] font-bold shrink-0">
                         {getInitials(u.name)}
                       </div>
-                      <span className="text-sm text-gray-300 flex-1">
-                        {u.name}
-                      </span>
+                      <span className="text-sm text-gray-300 flex-1">{u.name}</span>
                       {unreadCount > 0 ? (
                         <span className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[9px] font-bold text-white">
                           {unreadCount}
                         </span>
                       ) : (
-                        u.isOnline && (
-                          <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
-                        )
+                        u.isOnline && <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
                       )}
                     </div>
                   );
@@ -513,26 +528,21 @@ const ChatSection = () => {
       </div>
 
       {/* ── Chat Area ── */}
-      <div className="flex-1 flex flex-col bg-white">
+      <div className="flex-1 flex flex-col bg-white min-w-0">
+
         {/* Header */}
         <div className="h-12 flex items-center justify-between px-4 border-b border-gray-300 bg-white">
           {activeRoom ? (
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                {activeRoom.type === "channel"
-                  ? "#"
-                  : getInitials(activeRoom.name)}
+                {activeRoom.type === "channel" ? "#" : getInitials(activeRoom.name)}
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-800">
-                  {activeRoom.type === "channel"
-                    ? `# ${activeRoom.name}`
-                    : activeRoom.name}
+                  {activeRoom.type === "channel" ? `# ${activeRoom.name}` : activeRoom.name}
                 </h3>
                 {typingUsers.length > 0 ? (
-                  <p className="text-[10px] text-blue-500 italic">
-                    {typingUsers.join(", ")} typing...
-                  </p>
+                  <p className="text-[10px] text-blue-500 italic">{typingUsers.join(", ")} typing...</p>
                 ) : (
                   <p className="text-[10px] text-green-500 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
@@ -542,9 +552,7 @@ const ChatSection = () => {
               </div>
             </div>
           ) : (
-            <h3 className="text-sm font-semibold text-gray-400">
-              Select a channel or DM
-            </h3>
+            <h3 className="text-sm font-semibold text-gray-400">Select a channel or DM</h3>
           )}
           <div className="flex items-center gap-5 text-gray-500">
             <Phone size={18} className="cursor-pointer hover:text-gray-900" />
@@ -564,51 +572,28 @@ const ChatSection = () => {
             {messages.map((msg) => {
               const mine = isMyMessage(msg);
               return (
-                <div
-                  key={msg._id}
-                  className={`flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}
-                >
-                  {/* Dusre ka avatar */}
+                <div key={msg._id} className={`flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
                   {!mine && (
                     <div className="w-8 h-8 bg-purple-700 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
                       {getInitials(msg.sender?.name)}
                     </div>
                   )}
-
-                  {/* Bubble */}
-                  <div
-                    className={`max-w-[65%] flex flex-col ${mine ? "items-end" : "items-start"}`}
-                  >
-                    {/* Name + Time */}
-                    <div
-                      className={`flex items-center gap-2 mb-1 ${mine ? "flex-row-reverse" : "flex-row"}`}
-                    >
+                  <div className={`max-w-[65%] flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                    <div className={`flex items-center gap-2 mb-1 ${mine ? "flex-row-reverse" : "flex-row"}`}>
                       <span className="text-xs font-semibold text-gray-600">
                         {mine ? "You" : msg.sender?.name}
                       </span>
-                      <span className="text-[10px] text-gray-400">
-                        {formatTime(msg.createdAt)}
-                      </span>
+                      <span className="text-[10px] text-gray-400">{formatTime(msg.createdAt)}</span>
                     </div>
-
-                    {/* Text */}
                     {msg.content && (
-                      <div
-                        className={`px-4 py-2 rounded-2xl text-sm break-words ${
-                          mine
-                            ? "bg-[#4A154B] text-white rounded-br-sm"
-                            : "bg-gray-100 text-gray-800 rounded-bl-sm"
-                        }`}
-                      >
+                      <div className={`px-4 py-2 rounded-2xl text-sm break-words ${
+                        mine ? "bg-[#4A154B] text-white rounded-br-sm" : "bg-gray-100 text-gray-800 rounded-bl-sm"
+                      }`}>
                         {msg.content}
                       </div>
                     )}
-
-                    {/* File/Image */}
                     {renderFile(msg, mine)}
                   </div>
-
-                  {/* Mera avatar */}
                   {mine && (
                     <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
                       {getInitials(user?.name)}
@@ -618,7 +603,6 @@ const ChatSection = () => {
               );
             })}
 
-            {/* Typing dots */}
             {typingUsers.length > 0 && (
               <div className="flex items-end gap-2">
                 <div className="w-8 h-8 bg-purple-700 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
@@ -626,18 +610,9 @@ const ChatSection = () => {
                 </div>
                 <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-sm">
                   <div className="flex gap-1 items-center">
-                    <span
-                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                      style={{ animationDelay: "0ms" }}
-                    ></span>
-                    <span
-                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                      style={{ animationDelay: "150ms" }}
-                    ></span>
-                    <span
-                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                      style={{ animationDelay: "300ms" }}
-                    ></span>
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></span>
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></span>
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></span>
                   </div>
                 </div>
               </div>
@@ -647,83 +622,86 @@ const ChatSection = () => {
         </div>
 
         {/* Message Input */}
-        {showEmoji && (
-          <div className="absolute bottom-27 left-180 z-50">
-            <EmojiPicker
-              onEmojiClick={(emojiData) => {
-                setMessageText((prev) => prev + emojiData.emoji);
-                setShowEmoji(false);
-              }}
-              height={350}
-              width={300}
-            />
-          </div>
-        )}
         <div className="border-t border-gray-300 bg-white px-6 py-3 relative">
-          <div className="border rounded-lg overflow-hidden focus-within:border-gray-400 shadow-sm transition-all">
-            <div className="flex gap-4 text-xs text-gray-500 px-3 py-2 border-b bg-gray-50">
-              <span className="font-bold cursor-pointer hover:text-black">
-                B
-              </span>
-              <span className="italic cursor-pointer hover:text-black">I</span>
-              <span className="line-through cursor-pointer hover:text-black">
-                S
-              </span>
-              <span className="font-mono cursor-pointer hover:text-black">
-                {"</>"}
-              </span>
-              <span
-                className="cursor-pointer hover:text-black "
-                onClick={() => setShowEmoji(!showEmoji)}
+
+          {/* Emoji Picker */}
+          {showEmoji && (
+            <div className="absolute bottom-24 left-6 z-50">
+              <EmojiPicker
+                onEmojiClick={(emojiData) => {
+                  setMessageText((prev) => prev + emojiData.emoji);
+                  setShowEmoji(false);
+                }}
+                height={350}
+                width={300}
+              />
+            </div>
+          )}
+
+          {/* Plus Menu */}
+          {showPlusMenu && (
+            <div className="absolute bottom-24 left-6 z-50 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden w-44">
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-sm text-gray-700"
               >
-                😊
-              </span>
+                <Image size={16} className="text-purple-500" />
+                Upload Image
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-sm text-gray-700 border-t"
+              >
+                <FileText size={16} className="text-blue-500" />
+                Upload Document
+              </button>
+            </div>
+          )}
+
+          <div className="border rounded-lg overflow-hidden focus-within:border-gray-400 shadow-sm transition-all">
+            {/* Toolbar */}
+            <div className="flex gap-4 text-xs text-gray-500 px-3 py-2 border-b bg-gray-50 items-center">
+              <span
+                onClick={() => setBoldActive(!boldActive)}
+                className={`font-bold cursor-pointer hover:text-black px-1 rounded ${boldActive ? "bg-gray-200 text-black" : ""}`}
+              >B</span>
+              <span
+                onClick={() => setItalicActive(!italicActive)}
+                className={`italic cursor-pointer hover:text-black px-1 rounded ${italicActive ? "bg-gray-200 text-black" : ""}`}
+              >I</span>
+              <span className="line-through cursor-pointer hover:text-black">S</span>
+              <span className="font-mono cursor-pointer hover:text-black">{"</>"}</span>
+              <span
+                className="cursor-pointer hover:text-black ml-1"
+                onClick={() => { setShowEmoji(!showEmoji); setShowPlusMenu(false); }}
+              >😊</span>
             </div>
 
             {/* Image Preview */}
             {filePreview && (
               <div className="px-3 pt-2 relative inline-block">
-                <img
-                  src={filePreview}
-                  alt="preview"
-                  className="h-20 rounded-lg object-cover border"
-                />
+                <img src={filePreview} alt="preview" className="h-20 rounded-lg object-cover border" />
                 <button
-                  onClick={() => {
-                    setSelectedFile(null);
-                    setFilePreview(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
+                  onClick={() => { setSelectedFile(null); setFilePreview(null); if (imageInputRef.current) imageInputRef.current.value = ""; }}
                   className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]"
-                >
-                  ✕
-                </button>
+                >✕</button>
               </div>
             )}
 
-            {/* Non-image file */}
             {selectedFile && !filePreview && (
               <div className="px-3 pt-2 flex items-center gap-2 text-xs text-gray-600">
-                <span>📎 {selectedFile.name}</span>
+                <FileText size={14} className="text-blue-500" />
+                <span>{selectedFile.name}</span>
                 <button
-                  onClick={() => {
-                    setSelectedFile(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
+                  onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
                   className="text-red-500 hover:text-red-700"
-                >
-                  ✕
-                </button>
+                >✕</button>
               </div>
             )}
 
             <textarea
-              className="w-full px-3 py-2 text-sm outline-none h-16 resize-none"
-              placeholder={
-                activeRoom
-                  ? `Message ${activeRoom.type === "channel" ? "#" : ""}${activeRoom.name}`
-                  : "Select a room first..."
-              }
+              className={`w-full px-3 py-2 text-sm outline-none h-16 resize-none ${boldActive ? "font-bold" : ""} ${italicActive ? "italic" : ""}`}
+              placeholder={activeRoom ? `Message ${activeRoom.type === "channel" ? "#" : ""}${activeRoom.name}` : "Select a room first..."}
               value={messageText}
               onChange={handleTyping}
               onKeyDown={handleKeyDown}
@@ -732,29 +710,22 @@ const ChatSection = () => {
 
             <div className="flex justify-between items-center px-3 py-2">
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => { setShowPlusMenu(!showPlusMenu); setShowEmoji(false); }}
                 disabled={!activeRoom}
-                className="text-gray-400 text-lg hover:text-gray-600 disabled:opacity-50"
+                className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors disabled:opacity-50 ${
+                  showPlusMenu ? "bg-purple-100 text-purple-600" : "text-gray-400 hover:bg-gray-100"
+                }`}
               >
-                +
+                <Plus size={18} />
               </button>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,.pdf,.doc,.docx,.txt"
-                className="hidden"
-                onChange={handleFileChange}
-              />
+              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+              <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.txt,.xlsx,.ppt,.pptx" className="hidden" onChange={handleFileChange} />
 
               <button
                 type="button"
                 onClick={selectedFile ? sendFileMessage : sendMessage}
-                disabled={
-                  !activeRoom ||
-                  (!messageText.trim() && !selectedFile) ||
-                  uploading
-                }
+                disabled={!activeRoom || (!messageText.trim() && !selectedFile) || uploading}
                 className="bg-[#007A5A] text-white px-4 py-1.5 rounded text-sm font-semibold hover:bg-[#006046] transition-colors shadow-sm disabled:opacity-50"
               >
                 {uploading ? "Uploading..." : "Send"}
@@ -764,23 +735,33 @@ const ChatSection = () => {
         </div>
       </div>
 
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          fetchChannels();
-        }}
-        token={token}
-      />
-      <AddMemberModal
-        isOpen={isAddMemberOpen}
-        onClose={() => {
-          setIsAddMemberOpen(false);
-          setSelectedChannel(null);
-        }}
-        channel={selectedChannel}
-        token={token}
-      />
+      {/* ── Image Modal ── */}
+      {imageModal && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
+          onClick={() => setImageModal(null)}
+        >
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <img src={imageModal} alt="preview" className="max-w-full max-h-[85vh] rounded-lg object-contain" />
+            <button
+              onClick={() => setImageModal(null)}
+              className="absolute top-2 right-2 w-8 h-8 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center"
+            >
+              <X size={16} />
+            </button>
+            <button
+              onClick={() => downloadFile(imageModal, imageModal.split("/").pop())}
+              className="absolute bottom-2 right-2 bg-white text-black px-3 py-1.5 rounded-lg text-sm font-semibold hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Download size={14} />
+              Download
+            </button>
+          </div>
+        </div>
+      )}
+
+      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); fetchChannels(); }} token={token} />
+      <AddMemberModal isOpen={isAddMemberOpen} onClose={() => { setIsAddMemberOpen(false); setSelectedChannel(null); }} channel={selectedChannel} token={token} />
     </div>
   );
 };
