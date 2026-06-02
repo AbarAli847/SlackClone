@@ -62,25 +62,55 @@ const ChatSection = () => {
   }, [activeRoom]);
 
  
+ 
+// ─── Save active room to localStorage ────────────────────────
+useEffect(() => {
+  if (activeRoom) {
+    localStorage.setItem("activeRoom", JSON.stringify(activeRoom));
+  }
+}, [activeRoom]);
+
+ 
 // ─── Restore active room on refresh ──────────────────────────
 useEffect(() => {
   if (!token) return;
   if (!channels.length && !users.length) return;
+  if (activeRoom) return;
 
   const saved = localStorage.getItem("activeRoom");
-  if (!saved || activeRoom) return;
+  if (!saved) return;
 
   try {
     const room = JSON.parse(saved);
-    if (room.type === "channel" && channels.length) {
+    const savedToken = localStorage.getItem("token");
+
+    if (room.type === "channel") {
       const channel = channels.find((c) => c._id === room.id);
-      if (channel) joinChannel(channel);
-    } else if (room.type === "dm" && users.length) {
+      if (channel) {
+        setActiveRoom({ type: "channel", id: channel._id, name: channel.name });
+        if (socket) socket.emit("join:channel", { channelId: channel._id });
+        fetch(`${BACKEND_URL}/api/messages/channel/${channel._id}`, {
+          headers: { Authorization: `Bearer ${savedToken}` },
+        })
+          .then((r) => r.json())
+          .then((d) => { if (d.success) setMessages(d.messages); });
+      }
+    } else if (room.type === "dm") {
       const targetUser = users.find((u) => room.id.includes(u._id));
-      if (targetUser) joinDM(targetUser);
+      if (targetUser) {
+        setActiveRoom({ type: "dm", id: room.id, name: targetUser.name });
+        if (socket) socket.emit("join:dm", { roomId: room.id });
+        fetch(`${BACKEND_URL}/api/messages/dm/${room.id}`, {
+          headers: { Authorization: `Bearer ${savedToken}` },
+        })
+          .then((r) => r.json())
+          .then((d) => { if (d.success) setMessages(d.messages); });
+      }
     }
-  } catch (e) {}
-}, [channels, users, token]); // ← channels aur users dono pe watch karo
+  } catch (e) {
+    console.error("Restore error:", e);
+  }
+}, [channels, users, token, socket]);
 
   // ─── Socket.io Connect ───────────────────────────────────────
   useEffect(() => {
@@ -95,7 +125,7 @@ useEffect(() => {
     });
 
     socket.on("connect", () => {
-      console.log("✅ Socket connected!");
+      console.log("Socket connected!");
       socket.emit("user:joinAllDMs");
     });
 
@@ -248,7 +278,7 @@ useEffect(() => {
           if (exists) return prev;
           return [...prev, data.message];
         });
-        // Dusron ko broadcast karo
+        
         if (socket) {
           socket.emit("file:new", {
             roomId: activeRoom.id,
