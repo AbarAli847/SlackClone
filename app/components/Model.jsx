@@ -23,7 +23,7 @@ const Modal = ({ isOpen, onClose, token }) => {
 
     // Private channel sirf admin bana sakta hai
     if (isPrivate && !isAdmin) {
-      setError('Sirf Admin private channel bana sakta hai');
+      setError('Only admin create private chennels ');
       return;
     }
 
@@ -57,7 +57,7 @@ const Modal = ({ isOpen, onClose, token }) => {
       onClose();
 
     } catch (err) {
-      setError('Server se connection nahi ho raha');
+      setError('Unable to connect to the server');
       setLoading(false);
     }
   };
