@@ -42,13 +42,13 @@ const Asidebar = () => {
   const getInitials = (name) =>
     name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'AU';
 
+  // Lowercase routes handle issues globally in Next.js structure
   const navItems = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Chat', href: '/chats', icon: MessageSquare },
     { name: 'Attendance', href: '/attendance', icon: CalendarCheck },
   ];
 
-  //  
   if (pathname === '/login' || pathname === '/register') {
     return null;
   }
@@ -75,20 +75,25 @@ const Asidebar = () => {
         </div>
 
         <nav className="flex-1 px-3 space-y-2">
-          {navItems.map((item) => (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
-                pathname === item.href
-                  ? 'bg-blue-600 text-white'
-                  : 'hover:bg-white/5'
-              }`}
-            >
-              <item.icon size={20} />
-              {!collapsed && <span>{item.name}</span>}
-            </Link>
-          ))}
+          {navItems.map((item) => {
+            // Case-insensitive direct string matching to ensure highlight works perfectly
+            const isActive = pathname.toLowerCase() === item.href.toLowerCase();
+            
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                  isActive
+                    ? 'bg-blue-600 text-white'
+                    : 'hover:bg-white/5'
+                }`}
+              >
+                <item.icon size={20} />
+                {!collapsed && <span>{item.name}</span>}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* User */}
