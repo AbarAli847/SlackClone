@@ -151,6 +151,7 @@ const Navbar = () => {
   const getPageTitle = () => {
     if (pathname === "/chats") return "CHAT";
     if (pathname === "/attendance") return "ATTENDANCE";
+    if (pathname === '/leaves') return "MY LEAVES";
     if (pathname === "/") return "DASHBOARD";
     return "CHAT";
   };
