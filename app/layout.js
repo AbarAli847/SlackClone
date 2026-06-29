@@ -3,8 +3,8 @@ import "./globals.css";
 import Asidebar from "./components/Asidebar";
 import Navbar from "./components/Navbar";
 import { AuthProvider } from "../app/context/AuthContext";
-
 import { SocketProvider } from "../app/context/SocketContext";
+import { SidebarProvider } from "./context/SidebarContext";
 
 
 const geistSans = Geist({
@@ -24,13 +24,20 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
       <body className="min-h-full flex flex-col bg-white">
         <AuthProvider>
           <SocketProvider>
-            <Asidebar />
-            <Navbar />
-            {children}
+            <SidebarProvider>
+            
+                <Asidebar />
+                <Navbar />
+                {children}
+             
+            </SidebarProvider>
           </SocketProvider>
         </AuthProvider>
       </body>

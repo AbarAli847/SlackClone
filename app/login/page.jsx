@@ -15,7 +15,7 @@ const LoginPage = () => {
     setError("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/auth/login", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -34,7 +34,11 @@ const LoginPage = () => {
       localStorage.setItem("user", JSON.stringify(data.user));
 
       // Chat page pe redirect
-      router.push("/chats");
+     if (data.user.role === 'admin') {
+  router.push("/admin/leaves"); // ya jo bhi admin route hai
+} else {
+  router.push("/chats");
+}
     } catch (err) {
       setError("Server se connection nahi ho raha");
       setLoading(false);
