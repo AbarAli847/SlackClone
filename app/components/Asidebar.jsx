@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  MessageSquare, CalendarCheck, LayoutDashboard, LogOut, Menu, FileText
+  MessageSquare, CalendarCheck, LayoutDashboard, LogOut, Menu, FileText,
+  CheckSquare, ChevronDown, ChevronRight, LayoutGrid, List, User
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -18,6 +19,7 @@ const Asidebar = () => {
   const [user, setUser] = useState(null);
   const [showLogoutTab, setShowLogoutTab] = useState(false);
   const [leaveCount, setLeaveCount] = useState(0);
+  const [taskDropdownOpen, setTaskDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -29,19 +31,23 @@ const Asidebar = () => {
     }
   }, []);
 
+  // ✅ Task dropdown auto open karo agar task route pe ho
+  useEffect(() => {
+    if (pathname.startsWith('/tasks')) {
+      setTaskDropdownOpen(true);
+    }
+  }, [pathname]);
+
   const fetchLeaveCount = async (role) => {
     try {
       const token = localStorage.getItem('token');
-
       if (role === 'admin') {
-        // ✅ Admin ke liye pending leaves count
         const res = await fetch(`${BACKEND_URL}/leave/all?status=Pending`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         const data = await res.json();
         setLeaveCount(data.total || 0);
       } else {
-        // ✅ User ke liye apni approved leaves count
         const res = await fetch(`${BACKEND_URL}/leave/my`, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -81,6 +87,15 @@ const Asidebar = () => {
     { name: 'Leaves', href: '/leaves', icon: FileText, badge: leaveCount },
   ];
 
+  // ✅ Task submenu items
+  const taskItems = [
+    { name: 'Kanban Board', href: '/tasks/kanban', icon: LayoutGrid },
+    { name: 'List View', href: '/tasks/list', icon: List },
+    { name: 'My Tasks', href: '/tasks/my', icon: User },
+  ];
+
+  const isTaskActive = pathname.startsWith('/tasks');
+
   if (pathname === '/login' || pathname === '/register') return null;
 
   return (
@@ -102,7 +117,8 @@ const Asidebar = () => {
           )}
         </div>
 
-        <nav className="flex-1 px-3 space-y-2">
+        <nav className="flex-1 px-3 space-y-2 overflow-y-auto">
+          {/* Normal nav items */}
           {navItems.map((item) => {
             const isActive = pathname.toLowerCase() === item.href.toLowerCase();
             return (
@@ -125,6 +141,50 @@ const Asidebar = () => {
               </Link>
             );
           })}
+
+          {/* ✅ Tasks Dropdown */}
+          <div>
+            <button
+              onClick={() => !collapsed && setTaskDropdownOpen(!taskDropdownOpen)}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                isTaskActive ? 'bg-blue-600 text-white' : 'hover:bg-white/5'
+              }`}
+            >
+              <div className="relative">
+                <CheckSquare size={20} />
+              </div>
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">Tasks</span>
+                  {taskDropdownOpen
+                    ? <ChevronDown size={16} />
+                    : <ChevronRight size={16} />
+                  }
+                </>
+              )}
+            </button>
+
+            {/* Submenu */}
+            {!collapsed && taskDropdownOpen && (
+              <div className="ml-4 mt-1 space-y-1 border-l border-white/10 pl-3">
+                {taskItems.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        isActive ? 'bg-blue-600/80 text-white' : 'hover:bg-white/5 text-gray-400'
+                      }`}
+                    >
+                      <item.icon size={16} />
+                      <span>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="p-4 border-t border-white/10 relative" ref={dropdownRef}>
