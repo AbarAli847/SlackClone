@@ -35,12 +35,12 @@ const statusStyle = (status) => {
   }
 };
 
-// isHolidaySelected prop add kiya
 export default function DailyTable({ selectedDate, isHolidaySelected = false }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [todayRecord, setTodayRecord] = useState(null);
+  const [activeBreak, setActiveBreak] = useState(null); // ✅ active break state
 
   const user = typeof window !== 'undefined'
     ? JSON.parse(localStorage.getItem('user') || '{}')
@@ -63,9 +63,7 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
         ? `${BACKEND_URL}/attendance/team?date=${selectedDate}`
         : `${BACKEND_URL}/attendance/my?date=${selectedDate}`;
 
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
 
       if (res.ok) {
@@ -77,7 +75,16 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
             employee_id: { name: user.name, role: user.role || '—' }
           }));
           setList(records);
-          setTodayRecord(records[0] || null);
+          const rec = records[0] || null;
+          setTodayRecord(rec);
+
+          // ✅ Active break check karo breaks array se
+          if (rec?.breaks) {
+            const openBreak = rec.breaks.find(b => b.break_in && !b.break_out);
+            setActiveBreak(openBreak || null);
+          } else {
+            setActiveBreak(null);
+          }
         }
       }
     } catch (err) {
@@ -93,10 +100,7 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
       const token = localStorage.getItem('token');
       const res = await fetch(`${BACKEND_URL}/attendance/${action}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        }
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (!res.ok) { alert(data.message); return; }
@@ -117,47 +121,38 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
   return (
     <div className="bg-white rounded-xl shadow-xs border border-gray-100 overflow-hidden">
       <div className="p-4 bg-gray-50/70 border-b border-gray-100 flex flex-wrap justify-between items-center text-xs text-gray-500 gap-2 font-medium">
-        <div>{formattedDate} • Work: 10:00 AM - 6:00 PM • Break: 1:00 PM - 2:00 PM • Grace: 10 min</div>
+        <div>{formattedDate} • Work: 09:00 - 18:00 • Break: 13:00 - 14:00 • Grace: 10 min</div>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> On Time</span>
           <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500"></span> Late</span>
 
-          {/* ✅ Holiday wale din buttons nahi dikhenge */}
           {!isAdmin && isToday && !isHolidaySelected && (
             <div className="flex gap-2 ml-4">
+              {/* Clock In */}
               {!todayRecord?.clock_in && (
-                <button
-                  onClick={() => handleAttendance('clock-in')}
-                  disabled={actionLoading}
-                  className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 transition-colors"
-                >
+                <button onClick={() => handleAttendance('clock-in')} disabled={actionLoading}
+                  className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 transition-colors">
                   {actionLoading ? '...' : '● Clock In'}
                 </button>
               )}
+              {/* Clock Out */}
               {todayRecord?.clock_in && !todayRecord?.clock_out && (
-                <button
-                  onClick={() => handleAttendance('clock-out')}
-                  disabled={actionLoading}
-                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 disabled:opacity-60 transition-colors"
-                >
+                <button onClick={() => handleAttendance('clock-out')} disabled={actionLoading}
+                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 disabled:opacity-60 transition-colors">
                   {actionLoading ? '...' : '■ Clock Out'}
                 </button>
               )}
-              {todayRecord?.clock_in && !todayRecord?.clock_out && !todayRecord?.break_in && (
-                <button
-                  onClick={() => handleAttendance('break-in')}
-                  disabled={actionLoading}
-                  className="px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-xl hover:bg-amber-600 disabled:opacity-60 transition-colors"
-                >
+              {/* Break In — sirf tab dikhao jab active break nahi */}
+              {todayRecord?.clock_in && !todayRecord?.clock_out && !activeBreak && (
+                <button onClick={() => handleAttendance('break-in')} disabled={actionLoading}
+                  className="px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-xl hover:bg-amber-600 disabled:opacity-60 transition-colors">
                   Break In
                 </button>
               )}
-              {todayRecord?.break_in && !todayRecord?.break_out && (
-                <button
-                  onClick={() => handleAttendance('break-out')}
-                  disabled={actionLoading}
-                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 disabled:opacity-60 transition-colors"
-                >
+              {/* Break Out — sirf tab dikhao jab active break hai */}
+              {activeBreak && (
+                <button onClick={() => handleAttendance('break-out')} disabled={actionLoading}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 disabled:opacity-60 transition-colors">
                   Break Out
                 </button>
               )}
@@ -189,6 +184,8 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
                 const name = m.employee_id?.name || 'Unknown';
                 const role = m.employee_id?.role || '—';
                 const color = tagColors[idx % tagColors.length];
+                // ✅ breaks array se pehla break lo
+                const firstBreak = m.breaks?.[0];
 
                 return (
                   <tr key={m._id} className="hover:bg-gray-50/50 transition-colors">
@@ -204,8 +201,14 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
                     <td className="p-4 font-semibold text-emerald-600">
                       {m.clock_in ? `● ${formatTime(m.clock_in)}` : '—'}
                     </td>
-                    <td className="p-4 text-gray-500">{formatTime(m.break_in)}</td>
-                    <td className="p-4 text-gray-500">{formatTime(m.break_out)}</td>
+                    {/* ✅ breaks array se break_in */}
+                    <td className="p-4 text-gray-500">
+                      {firstBreak?.break_in ? formatTime(firstBreak.break_in) : '—'}
+                    </td>
+                    {/* ✅ breaks array se break_out */}
+                    <td className="p-4 text-gray-500">
+                      {firstBreak?.break_out ? formatTime(firstBreak.break_out) : '—'}
+                    </td>
                     <td className={`p-4 font-semibold ${m.is_late ? 'text-amber-500' : 'text-emerald-600'}`}>
                       {formatTime(m.clock_out)}
                       {m.late_minutes > 0 && (
