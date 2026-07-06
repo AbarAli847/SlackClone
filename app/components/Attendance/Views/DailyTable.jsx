@@ -40,7 +40,7 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [todayRecord, setTodayRecord] = useState(null);
-  const [activeBreak, setActiveBreak] = useState(null); // ✅ active break state
+  const [activeBreak, setActiveBreak] = useState(null);  
 
   const user = typeof window !== 'undefined'
     ? JSON.parse(localStorage.getItem('user') || '{}')
@@ -78,7 +78,7 @@ export default function DailyTable({ selectedDate, isHolidaySelected = false }) 
           const rec = records[0] || null;
           setTodayRecord(rec);
 
-          // ✅ Active break check karo breaks array se
+          // 
           if (rec?.breaks) {
             const openBreak = rec.breaks.find(b => b.break_in && !b.break_out);
             setActiveBreak(openBreak || null);
