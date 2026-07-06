@@ -153,6 +153,9 @@ const Navbar = () => {
     if (pathname === "/attendance") return "ATTENDANCE";
     if (pathname === '/leaves') return "MY LEAVES";
     if (pathname === "/") return "DASHBOARD";
+    if (pathname === "/tasks/my") return "MY TASKS";
+  if (pathname === "/tasks/kanban") return "KANBAN BOARD";
+  if (pathname === "/tasks/list") return "LIST VIEW";
     return "CHAT";
   };
 
