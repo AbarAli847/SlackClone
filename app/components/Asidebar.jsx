@@ -31,7 +31,7 @@ const Asidebar = () => {
     }
   }, []);
 
-  // ✅ Task dropdown auto open karo agar task route pe ho
+  //  
   useEffect(() => {
     if (pathname.startsWith('/tasks')) {
       setTaskDropdownOpen(true);
@@ -87,7 +87,7 @@ const Asidebar = () => {
     { name: 'Leaves', href: '/leaves', icon: FileText, badge: leaveCount },
   ];
 
-  // ✅ Task submenu items
+  // Task submenu items
   const taskItems = [
     { name: 'Kanban Board', href: '/tasks/kanban', icon: LayoutGrid },
     { name: 'List View', href: '/tasks/list', icon: List },
@@ -142,7 +142,7 @@ const Asidebar = () => {
             );
           })}
 
-          {/* ✅ Tasks Dropdown */}
+          {/*  Tasks Dropdown */}
           <div>
             <button
               onClick={() => !collapsed && setTaskDropdownOpen(!taskDropdownOpen)}
