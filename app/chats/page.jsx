@@ -55,29 +55,26 @@ const ChatSection = () => {
     setUser(JSON.parse(savedUser));
   }, []);
 
-  // ─── Active Room Ref sync ────────────────────────────────────
-  useEffect(() => {
-    activeRoomRef.current = activeRoom;
-    if (activeRoom) localStorage.setItem("activeRoom", JSON.stringify(activeRoom));
-  }, [activeRoom]);
-
  
- 
-// ─── Save active room to localStorage ────────────────────────
+// ─── Active Room Ref sync ────────────────────────────────────
 useEffect(() => {
+  activeRoomRef.current = activeRoom;
   if (activeRoom) {
-    localStorage.setItem("activeRoom", JSON.stringify(activeRoom));
+    localStorage.setItem("activeRoom", JSON.stringify({
+      id: activeRoom.id,
+      type: activeRoom.type,   
+      name: activeRoom.name,
+    }));
   }
 }, [activeRoom]);
 
- 
-// ─── Restore active room on refresh ──────────────────────────
+  // ─── Restore active room on refresh ──────────────────────────
 useEffect(() => {
   if (!token) return;
   if (!channels.length && !users.length) return;
-  if (activeRoom) return;
+  if (activeRoomRef.current) return;
 
-  const saved = localStorage.getItem("activeRoom");
+  const saved = localStorage.getItem("openRoom") || localStorage.getItem("activeRoom");
   if (!saved) return;
 
   try {
@@ -85,10 +82,18 @@ useEffect(() => {
     const savedToken = localStorage.getItem("token");
 
     if (room.type === "channel") {
-      const channel = channels.find((c) => c._id === room.id);
+      const channel = channels.find((c) => c._id === room.id || c._id === room.roomId);
       if (channel) {
         setActiveRoom({ type: "channel", id: channel._id, name: channel.name });
-        if (socket) socket.emit("join:channel", { channelId: channel._id });
+        //  Socket ready hone ka wait karo
+        const joinAndFetch = () => {
+          if (socket?.connected) {
+            socket.emit("join:channel", { channelId: channel._id });
+          }
+        };
+        joinAndFetch();
+        if (socket && !socket.connected) socket.once("connect", joinAndFetch);
+
         fetch(`${BACKEND_URL}/api/messages/channel/${channel._id}`, {
           headers: { Authorization: `Bearer ${savedToken}` },
         })
@@ -96,21 +101,32 @@ useEffect(() => {
           .then((d) => { if (d.success) setMessages(d.messages); });
       }
     } else if (room.type === "dm") {
-      const targetUser = users.find((u) => room.id.includes(u._id));
+      const roomId = room.id || room.roomId;
+      const targetUser = users.find((u) => roomId?.includes(u._id));
       if (targetUser) {
-        setActiveRoom({ type: "dm", id: room.id, name: targetUser.name });
-        if (socket) socket.emit("join:dm", { roomId: room.id });
-        fetch(`${BACKEND_URL}/api/messages/dm/${room.id}`, {
+        setActiveRoom({ type: "dm", id: roomId, name: targetUser.name });
+        // Socket ready hone ka wait karo
+        const joinAndFetch = () => {
+          if (socket?.connected) {
+            socket.emit("join:dm", { roomId });
+          }
+        };
+        joinAndFetch();
+        if (socket && !socket.connected) socket.once("connect", joinAndFetch);
+
+        fetch(`${BACKEND_URL}/api/messages/dm/${roomId}`, {
           headers: { Authorization: `Bearer ${savedToken}` },
         })
           .then((r) => r.json())
           .then((d) => { if (d.success) setMessages(d.messages); });
       }
     }
+
+    localStorage.removeItem("openRoom");
   } catch (e) {
     console.error("Restore error:", e);
   }
-}, [channels, users, token, socket]);
+}, [channels, users, token]);
 
   // ─── Socket.io Connect ───────────────────────────────────────
   useEffect(() => {
@@ -124,10 +140,29 @@ useEffect(() => {
       reconnectionDelay: 1000,
     });
 
-    socket.on("connect", () => {
-      console.log("Socket connected!");
-      socket.emit("user:joinAllDMs");
-    });
+socket.on("connect", () => {
+  console.log("Socket connected!");
+  socket.emit("user:joinAllDMs");
+
+  const currentRoom = activeRoomRef.current;
+  if (currentRoom) {
+    if (currentRoom.type === "channel") {
+      socket.emit("join:channel", { channelId: currentRoom.id });
+    } else {
+      socket.emit("join:dm", { roomId: currentRoom.id });
+    }
+
+    // ✅ Messages bhi reload karo
+    const savedToken = localStorage.getItem("token");
+    const url = currentRoom.type === "channel"
+      ? `${BACKEND_URL}/api/messages/channel/${currentRoom.id}`
+      : `${BACKEND_URL}/api/messages/dm/${currentRoom.id}`;
+
+    fetch(url, { headers: { Authorization: `Bearer ${savedToken}` } })
+      .then(r => r.json())
+      .then(d => { if (d.success) setMessages(d.messages); });
+  }
+});
 
     socket.on("message:new", (message) => {
       const currentRoom = activeRoomRef.current;
@@ -272,18 +307,13 @@ useEffect(() => {
       });
       const data = await res.json();
       if (data.success) {
-        // Local mein add karo
         setMessages((prev) => {
           const exists = prev.some((m) => m._id === data.message._id);
           if (exists) return prev;
           return [...prev, data.message];
         });
-        
         if (socket) {
-          socket.emit("file:new", {
-            roomId: activeRoom.id,
-            message: data.message,
-          });
+          socket.emit("file:new", { roomId: activeRoom.id, message: data.message });
         }
       }
     } catch (err) { console.error(err); }
@@ -364,7 +394,7 @@ useEffect(() => {
   // ─── Render File/Image ────────────────────────────────────────
   const renderFile = (msg, mine) => {
     if (!msg.fileUrl) return null;
-   const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.fileUrl);
+    const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.fileUrl);
     const fullUrl = `${BACKEND_URL}${msg.fileUrl}`;
     const filename = msg.fileUrl.split("/").pop();
 
@@ -448,7 +478,6 @@ useEffect(() => {
         </div>
 
         <div className="px-1 space-y-4 text-sm flex-1 overflow-y-auto">
-
           {/* Channels */}
           <div>
             <div
@@ -559,7 +588,6 @@ useEffect(() => {
 
       {/* ── Chat Area ── */}
       <div className="flex-1 flex flex-col bg-white min-w-0">
-
         {/* Header */}
         <div className="h-12 flex items-center justify-between px-4 border-b border-gray-300 bg-white">
           {activeRoom ? (
@@ -597,7 +625,6 @@ useEffect(() => {
               👈 Please Select Any Channel or DM
             </div>
           )}
-
           <div className="space-y-3">
             {messages.map((msg) => {
               const mine = isMyMessage(msg);
@@ -632,7 +659,6 @@ useEffect(() => {
                 </div>
               );
             })}
-
             {typingUsers.length > 0 && (
               <div className="flex items-end gap-2">
                 <div className="w-8 h-8 bg-purple-700 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
@@ -653,8 +679,6 @@ useEffect(() => {
 
         {/* Message Input */}
         <div className="border-t border-gray-300 bg-white px-6 py-3 relative">
-
-          {/* Emoji Picker */}
           {showEmoji && (
             <div className="absolute bottom-24 left-6 z-50">
               <EmojiPicker
@@ -668,7 +692,6 @@ useEffect(() => {
             </div>
           )}
 
-          {/* Plus Menu */}
           {showPlusMenu && (
             <div className="absolute bottom-24 left-6 z-50 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden w-44">
               <button
@@ -689,25 +712,17 @@ useEffect(() => {
           )}
 
           <div className="border rounded-lg overflow-hidden focus-within:border-gray-400 shadow-sm transition-all">
-            {/* Toolbar */}
             <div className="flex gap-4 text-xs text-gray-500 px-3 py-2 border-b bg-gray-50 items-center">
-              <span
-                onClick={() => setBoldActive(!boldActive)}
-                className={`font-bold cursor-pointer hover:text-black px-1 rounded ${boldActive ? "bg-gray-200 text-black" : ""}`}
-              >B</span>
-              <span
-                onClick={() => setItalicActive(!italicActive)}
-                className={`italic cursor-pointer hover:text-black px-1 rounded ${italicActive ? "bg-gray-200 text-black" : ""}`}
-              >I</span>
+              <span onClick={() => setBoldActive(!boldActive)}
+                className={`font-bold cursor-pointer hover:text-black px-1 rounded ${boldActive ? "bg-gray-200 text-black" : ""}`}>B</span>
+              <span onClick={() => setItalicActive(!italicActive)}
+                className={`italic cursor-pointer hover:text-black px-1 rounded ${italicActive ? "bg-gray-200 text-black" : ""}`}>I</span>
               <span className="line-through cursor-pointer hover:text-black">S</span>
               <span className="font-mono cursor-pointer hover:text-black">{"</>"}</span>
-              <span
-                className="cursor-pointer hover:text-black ml-1"
-                onClick={() => { setShowEmoji(!showEmoji); setShowPlusMenu(false); }}
-              >😊</span>
+              <span className="cursor-pointer hover:text-black ml-1"
+                onClick={() => { setShowEmoji(!showEmoji); setShowPlusMenu(false); }}>😊</span>
             </div>
 
-            {/* Image Preview */}
             {filePreview && (
               <div className="px-3 pt-2 relative inline-block">
                 <img src={filePreview} alt="preview" className="h-20 rounded-lg object-cover border" />
@@ -767,16 +782,11 @@ useEffect(() => {
 
       {/* ── Image Modal ── */}
       {imageModal && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-          onClick={() => setImageModal(null)}
-        >
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50" onClick={() => setImageModal(null)}>
           <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <img src={imageModal} alt="preview" className="max-w-full max-h-[85vh] rounded-lg object-contain" />
-            <button
-              onClick={() => setImageModal(null)}
-              className="absolute top-2 right-2 w-8 h-8 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center"
-            >
+            <button onClick={() => setImageModal(null)}
+              className="absolute top-2 right-2 w-8 h-8 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center">
               <X size={16} />
             </button>
             <button
