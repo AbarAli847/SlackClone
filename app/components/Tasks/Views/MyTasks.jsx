@@ -210,7 +210,7 @@ export default function MyTasks() {
     finally { setSubmitting(false); }
   };
 
-  // ✅ Project Submit
+  // Project Submit
   const handleProjectSubmit = async () => {
     if (!projectForm.name) { alert("Project name zaroori hai!"); return; }
     setProjectSubmitting(true);
@@ -225,7 +225,7 @@ export default function MyTasks() {
       if (!res.ok) { alert(data.message); return; }
       setShowProjectForm(false);
       setProjectForm({ name: "", description: "", priority: "Medium", start_date: "", end_date: "", color: "#3B82F6" });
-      fetchProjects(); // ✅ Projects refresh karo
+      fetchProjects(); // Projects refresh karo
     } catch (err) { alert("Server error"); }
     finally { setProjectSubmitting(false); }
   };
@@ -254,7 +254,7 @@ export default function MyTasks() {
           <span className="text-sm font-bold text-gray-500">{tasks.length} task{tasks.length !== 1 ? "s" : ""}</span>
           {isAdmin && (
             <>
-              {/* ✅ Add Project Button */}
+              {/* Add Project Button */}
               <button
                 onClick={() => setShowProjectForm(true)}
                 className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-emerald-700 transition-colors"
@@ -292,7 +292,7 @@ export default function MyTasks() {
         ))}
       </div>
 
-      {/* ✅ Add Project Form */}
+      {/* Add Project Form */}
       {showProjectForm && isAdmin && (
         <div className="bg-white border border-gray-100 rounded-2xl p-6 shadow-xs space-y-4">
           <div className="flex justify-between items-center">
@@ -517,32 +517,32 @@ export default function MyTasks() {
                         <Trash2 className="w-3 h-3" /> Delete
                       </button>
                     )}
-                    {!isAdmin && (
-                      <>
-                        {!isTimerActive && !activeTimer && (
-                          <button onClick={() => handleTimer("start-timer", task._id)}
-                            className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors">
-                            ▶ Start
-                          </button>
-                        )}
-                        {isTimerRunning && (
-                          <>
-                            <button onClick={() => handleTimer("pause-timer", task._id)}
-                              className="px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-xl hover:bg-amber-600 transition-colors">⏸ Pause</button>
-                            <button onClick={() => handleTimer("stop-timer", task._id)}
-                              className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition-colors">⏹ Stop</button>
-                          </>
-                        )}
-                        {isTimerActive && activeTimer?.status === "paused" && (
-                          <>
-                            <button onClick={() => handleTimer("resume-timer", task._id)}
-                              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors">▶ Resume</button>
-                            <button onClick={() => handleTimer("stop-timer", task._id)}
-                              className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition-colors">⏹ Stop</button>
-                          </>
-                        )}
-                      </>
-                    )}
+                    {!isAdmin && task.status !== 'Completed' && task.status !== 'Cancelled' && (
+  <>
+    {!isTimerActive && !activeTimer && (
+      <button onClick={() => handleTimer("start-timer", task._id)}
+        className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors">
+        ▶ Start
+      </button>
+    )}
+    {isTimerRunning && (
+      <>
+        <button onClick={() => handleTimer("pause-timer", task._id)}
+          className="px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-xl hover:bg-amber-600 transition-colors">⏸ Pause</button>
+        <button onClick={() => handleTimer("stop-timer", task._id)}
+          className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition-colors">⏹ Stop</button>
+      </>
+    )}
+    {isTimerActive && activeTimer?.status === "paused" && (
+      <>
+        <button onClick={() => handleTimer("resume-timer", task._id)}
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors">▶ Resume</button>
+        <button onClick={() => handleTimer("stop-timer", task._id)}
+          className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition-colors">⏹ Stop</button>
+      </>
+    )}
+  </>
+)}
                   </div>
                 </div>
               </div>
