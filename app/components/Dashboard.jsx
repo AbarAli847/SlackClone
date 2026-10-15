@@ -17,6 +17,12 @@ export default function Dashboard() {
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(null);
 
+  // ✅ Prevents hydration mismatch: Date()-based content only renders after client mount
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const [adminStats, setAdminStats] = useState({
     totalUsers: 0, pendingLeaves: 0, todayPresent: 0,
     todayAbsent: 0, todayLate: 0, totalTasks: 0,
@@ -221,10 +227,13 @@ export default function Dashboard() {
 
       <div className="mb-6">
         <h2 className="text-2xl font-black text-gray-900">
-          {getGreeting()}, {user?.name?.split(' ')[0]}! 👋
+          {/* ✅ Greeting depends on Date() → only render after mount to avoid hydration mismatch */}
+          {mounted ? getGreeting() : 'Hello'}, {user?.name?.split(' ')[0]}! 👋
         </h2>
-        <p className="text-sm text-gray-400 mt-1">
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+        <p className="text-sm text-gray-400 mt-1" suppressHydrationWarning>
+          {mounted
+            ? new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+            : ''}
         </p>
       </div>
 
@@ -298,8 +307,10 @@ export default function Dashboard() {
           {/* ✅ Attendance Widget */}
           <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
             <p className="text-xs text-gray-400 font-medium mb-1">Attendance</p>
-            <p className="text-sm text-gray-500 mb-4">
-              {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}, {new Date().toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
+            <p className="text-sm text-gray-500 mb-4" suppressHydrationWarning>
+              {mounted
+                ? `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}, ${new Date().toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                : ''}
             </p>
 
             <div className="flex flex-col items-center gap-4">
